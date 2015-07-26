@@ -54,6 +54,7 @@ class RuleProcessor
     public function parseRules($rules)
     {
         $groups = [];
+
         if (!empty($rules)) {
             $rules = str_replace(' ', '', $rules);
             $split = explode(',', $rules); //'ends:_id|ids,equals:id'

@@ -3,6 +3,15 @@ Laravel 5 model generator for an existing schema.
 
 It plugs into your existing database and generates model class files based on the existing tables.
 
+2015-0726
+Jim Finster altered slightly to add some "column intelligence" for using existing DBs that can't be refactored easily.
+    Added support for:
+        -- declaring non-standard table name
+        -- declaring non-standard primary key name
+        -- evaluating EXTRA and PRIVILEGE field contents for guarded status
+        -- moving fields named "ts" into guarded array
+    Added logical defaults for guarded and timestamp field identification
+
 # Installation
 Add ```"ignasbernotas/laravel-model-generator": "dev-master"``` to your composer.json file.
 

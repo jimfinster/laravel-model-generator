@@ -1,12 +1,15 @@
-<?php namespace {{namespace}};
+<?php
+
+namespace {{namespace}};
 
 use Illuminate\Database\Eloquent\Model;
 
 class {{class}} extends {{extends}} {
 
+    {{tablename}}
+    {{primaryKey}}
+    {{guarded}}
+    {{fillable}}
     {{timestamps}}
 
-    {{fillable}}
-
-    {{guarded}}
 }

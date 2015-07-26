@@ -1,9 +1,11 @@
 <?php namespace Iber\Generator\Commands;
 
-use Iber\Generator\Utilities\RuleProcessor;
-use Iber\Generator\Utilities\VariableConversion;
+
 use Symfony\Component\Console\Input\InputOption;
 use Illuminate\Console\GeneratorCommand;
+use Illuminate\Support\Str;
+use Iber\Generator\Utilities\RuleProcessor;
+use Iber\Generator\Utilities\VariableConversion;
 
 class MakeModelsCommand extends GeneratorCommand
 {
@@ -47,7 +49,7 @@ class MakeModelsCommand extends GeneratorCommand
      *
      * @var array
      */
-    protected $guardedRules = 'ends:_guarded'; //['ends' => ['_id', 'ids'], 'equals' => ['id']];
+    protected $guardedRules = 'ends:ID|_id|_ID|ids|IDs, equals:id|ID|ts';
 
     /**
      * Rules for columns that go into the fillable list.
@@ -61,7 +63,7 @@ class MakeModelsCommand extends GeneratorCommand
      *
      * @var array
      */
-    protected $timestampRules = 'ends:_at'; //['ends' => ['_at']];
+    protected $timestampRules = 'equals:created_at|updated_at';
 
     /**
      * Execute the console command.
@@ -95,25 +97,41 @@ class MakeModelsCommand extends GeneratorCommand
      * Generate a model file from a database table.
      *
      * @param $table
+     *
+     * @return boolean
      */
     protected function generateTable($table)
     {
         //prefix is the sub-directory within app
         $prefix = $this->option('dir');
-
         $class = VariableConversion::convertTableNameToClassName($table);
+        $plurals =  ['ies', 'es', 's'];
+        $path_name = '';
 
-        $name = rtrim($this->parseName($prefix . $class), 's');
+        if (Str::endsWith($class, ['ss']) || ! Str::endsWith($class, $plurals)) { //e.g., "address" or not plural
+            $path_name = $this->parseName($prefix . $class);
+        }
+        else {
+            foreach ($plurals as $plural) {
+                if (Str::endsWith($class, $plural)) {
+                    $path_name = rtrim($this->parseName($prefix . $class), $plural);
+                }
+            }
 
-        if ($this->files->exists($path = $this->getPath($name))) {
+        }
+
+        if ($this->files->exists($path = $this->getPath($path_name))) {
             return $this->error($this->extends . ' for '.$table.' already exists!');
         }
 
         $this->makeDirectory($path);
 
-        $this->files->put($path, $this->replaceTokens($name, $table));
+        $this->files->put($path, $this->replaceTokens($path_name, $table));
+        //$this->files->put($path, $this->replaceTokens($path_name, $class));
 
-        $this->info($this->extends . ' for '.$table.' created successfully.');
+        $this->info($this->extends . ' for ' . $table . ' created successfully.');
+
+        return true;
     }
 
     /**
@@ -126,16 +144,38 @@ class MakeModelsCommand extends GeneratorCommand
      */
     protected function replaceTokens($name, $table)
     {
-        $class = $this->buildClass($name);
+        $stub_class = $this->buildClass($name);
 
         $properties = $this->getTableProperties($table);
 
-        $class = str_replace('{{extends}}', $this->option('extends'), $class);
-        $class = str_replace('{{fillable}}', 'protected $fillable = ' . VariableConversion::convertArrayToString($properties['fillable']) . ';', $class);
-        $class = str_replace('{{guarded}}', 'protected $guarded = ' . VariableConversion::convertArrayToString($properties['guarded']) . ';', $class);
-        $class = str_replace('{{timestamps}}', 'public $timestamps = ' . VariableConversion::convertBooleanToString($properties['timestamps']) . ';', $class);
+        if ($table <> $name) {
+            $stub_class = str_replace('{{tablename}}', 'protected $table = ' . "'$table';", $stub_class);
+        }
+        else {
+            str_replace('{{tablename}}', '', $stub_class);
+        }
 
-        return $class;
+        if ($properties['pk'] == 'id' || empty($properties['pk'])) {
+            $stub_class = str_replace('{{primaryKey}}', '', $stub_class);
+         }
+        else {
+            $stub_class = str_replace('{{primaryKey}}',
+                'protected $primaryKey = '. "'" . $properties['pk'] ."';",
+                $stub_class);
+        }
+
+        $stub_class = str_replace('{{extends}}', $this->option('extends'), $stub_class);
+        $stub_class = str_replace('{{fillable}}',
+            'protected $fillable = ' . VariableConversion::convertArrayToString($properties['fillable']) . ';',
+            $stub_class);
+        $stub_class = str_replace('{{guarded}}',
+            'protected $guarded = ' . VariableConversion::convertArrayToString($properties['guarded']) . ';',
+            $stub_class);
+        $stub_class = str_replace('{{timestamps}}',
+            'public $timestamps = ' . VariableConversion::convertBooleanToString($properties['timestamps']) . ';',
+            $stub_class);
+
+        return $stub_class;
     }
 
     /**
@@ -147,46 +187,52 @@ class MakeModelsCommand extends GeneratorCommand
      */
     protected function getTableProperties($table)
     {
+        $pk = null;
         $fillable = [];
         $guarded = [];
         $timestamps = false;
 
-        $columns = $this->getTableColumns($table);
+        //$columns = $this->getTableColumns($table);
+        $table_schema = $this->getTableSchema($table);
 
-        foreach ($columns as $column) {
-
-            //priotitze guarded properties and move to fillable
-            if ($this->ruleProcessor->check($this->option('fillable'), $column->name)) {
-                if(!in_array($column->name, ['id', 'created_at', 'updated_at', 'deleted_at'])) {
-                    $fillable[] = $column->name;
+        //foreach ($columns as $column) {
+        foreach ($table_schema as $item) {
+            if ($item->COLUMN_KEY == 'PRI') {
+                $pk = $item->COLUMN_NAME;
+                $guarded[] = $item->COLUMN_NAME;            }
+            elseif (!empty($item->EXTRA) || !stristr($item->PRIVILEGES, 'insert') || !stristr($item->PRIVILEGES, 'update')) {
+                $guarded[] = $item->COLUMN_NAME;
+            } /** @noinspection PhpUndefinedMethodInspection */ elseif ($this->ruleProcessor->check($this->option('fillable'), $item->COLUMN_NAME)) {
+                if (!in_array($item->COLUMN_NAME, ['id', 'created_at', 'updated_at', 'deleted_at'])) {
+                    $fillable[] = $item->COLUMN_NAME;
                 }
-            }
-            if ($this->ruleProcessor->check($this->option('guarded'), $column->name)) {
-                $fillable[] = $column->name;
+                else {
+                    $guarded[] = $item->COLUMN_NAME;
+                }
+            } /** @noinspection PhpUndefinedMethodInspection */ elseif ($this->ruleProcessor->check($this->option('guarded'), $item->COLUMN_NAME)) {
+                $guarded[] = $item->COLUMN_NAME;
             }
             //check if this model is timestampable
-            if ($this->ruleProcessor->check($this->option('timestamps'), $column->name)) {
+            /** @noinspection PhpUndefinedMethodInspection */
+            if ($this->ruleProcessor->check($this->option('timestamps'), $item->COLUMN_NAME)) {
                 $timestamps = true;
             }
         }
 
-        return ['fillable' => $fillable, 'guarded' => $guarded, 'timestamps' => $timestamps];
+        return ['pk' => $pk, 'fillable' => $fillable, 'guarded' => array_filter($guarded), 'timestamps' => $timestamps];
     }
 
     /**
-     * Get table columns.
+     * Get table schema.
      *
      * @param $table
-     *
-     * @return array
      */
-    protected function getTableColumns($table)
-    {
-        $columns = \DB::select("SELECT COLUMN_NAME as `name` FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table}'");
+    protected function getTableSchema($table) {
 
-        return $columns;
+        $table_schema = \DB::select("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$table'");
+
+        return $table_schema;
     }
-
     /**
      * Get stub file location.
      *
